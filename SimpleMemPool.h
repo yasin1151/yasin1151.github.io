@@ -69,16 +69,31 @@ protected:
 
 	//user-defined new function
 	NewFunc m_pNewFunc;
+
+	//when _listUnUsedMem can't find Mem, Invoke NewFunc times
+	size_t m_iInvokeFuncTimes;
+
+	/**
+	*	@brief : to find a node with same tag
+	*	@param _list : need to find list
+	*	@param tag : tag
+	*	@return : if find return iterator else return _list.end()
+	*/
+	typename std::list<MemTagNode>::iterator findWithTag(std::list<MemTagNode>& _list, size_t tag);
+
 public:
 
 	//default constructer
 	SimpleMemPool()
 		:m_pNewFunc(nullptr)
+		, m_iInvokeFuncTimes(1)
 	{}
 
+
 	//NewFunc
-	SimpleMemPool(const NewFunc& newFunc)
+	SimpleMemPool(const NewFunc& newFunc, size_t invokeFuncTimes = 5)
 		:m_pNewFunc(newFunc)
+		, m_iInvokeFuncTimes(invokeFuncTimes)
 	{}
 
 	//default destructer
@@ -109,7 +124,34 @@ public:
 	*	@param newFunc : func origin-type : T*(*NewFunc)(size_t tag)
 	*/
 	void setNewFunc(const NewFunc& newFunc);
+
+	/**
+	*	@brief : set the times when _listUnUsed can't find need mem
+	*	@param times : Invoke times
+	*/
+	void setCallNum(int times)
+	{
+		m_iInvokeFuncTimes = times;
+	}
+
+	/**
+	*	@brief : user manual operator NewFunc
+	*	@param tag : new mem tag
+	*	@param callNum : invoke num
+	*/
+	void callNewFunc(size_t tag, size_t callNum);
 };
+
+template <typename T>
+typename std::list<typename SimpleMemPool<T>::MemTagNode>::iterator SimpleMemPool<T>::findWithTag(std::list<MemTagNode>& _list, size_t tag)
+{
+	return find_if(_list.begin(), _list.end(), 
+		[&](const MemTagNode& tagNode)
+	{
+		return tagNode._tag == tag;
+	});
+}
+
 
 template <typename T>
 T* SimpleMemPool<T>::allocWithTag(size_t tag)
@@ -117,24 +159,30 @@ T* SimpleMemPool<T>::allocWithTag(size_t tag)
 	T* pRet = nullptr;
 
 	//to traverse the list
-	auto it = find_if(m_listUnUsedMem.begin(), m_listUnUsedMem.end(),
-		[&](const MemTagNode& tagNode)
-	{
-		return tagNode._tag == tag;
-	});
+	auto it = this->findWithTag(m_listUnUsedMem, tag);
 
 	if (it == m_listUnUsedMem.end() || m_listUnUsedMem.empty())
 	{
 		//try to call NewFunc
 		if (m_pNewFunc)
 		{
-			pRet = m_pNewFunc(tag);
+			//invoke NewFunc
+			this->callNewFunc(tag, m_iInvokeFuncTimes);
 
-			//call success
-			if (pRet)
+			//find the can use mem
+			auto itUnUsed = this->findWithTag(m_listUnUsedMem, tag);
+
+			//if success to invoke NewFunc
+			if (itUnUsed != m_listUnUsedMem.end())
 			{
-				m_listUsedMem.push_back(MemTagNode(pRet, tag));
-				return pRet;
+				//to get the pointer
+				pRet = (*itUnUsed)._pointer;
+
+				//append to _listUsedMem
+				m_listUsedMem.push_back(*itUnUsed);
+
+				//erase from _listUnUsedMem
+				m_listUnUsedMem.erase(itUnUsed);
 			}
 		}
 	}
@@ -200,6 +248,28 @@ void SimpleMemPool<T>::setNewFunc(const NewFunc& newFunc)
 {
 	m_pNewFunc = newFunc;
 }
+
+template <typename T>
+void SimpleMemPool<T>::callNewFunc(size_t tag, size_t callNum)
+{
+	T* pBuf = nullptr;
+	for (int i = 0; i < callNum; i++)
+	{
+		pBuf = m_pNewFunc(tag);
+		if (!pBuf)
+		{
+			//run out of memory
+			break;
+		}
+
+		//save time to find new Element
+		m_listUnUsedMem.push_front(MemTagNode(pBuf, tag));
+
+		//set pointer empty
+		pBuf = nullptr;
+	}
+}
+
 
 
 #endif
